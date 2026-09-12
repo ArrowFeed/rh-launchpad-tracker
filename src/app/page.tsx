@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { latestPrice, marketCap, volumeSince, graduationProgressPct, toUsd } from "@/lib/ponsMarket";
 import { getEthUsdPrice } from "@/lib/ethPrice";
 import TokenCard, { type CardData } from "./TokenCard";
+import LiveTradesPanel from "./LiveTradesPanel";
 
 // Without this, Next.js would run the database query once at build time
 // and bake that snapshot into a static page — the columns would never
@@ -96,6 +97,7 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50">
+      <LiveTradesPanel />
       <header className="border-b border-zinc-800">
         <div className="px-6 py-6">
           <h1 className="text-xl font-semibold tracking-tight">
