@@ -47,7 +47,7 @@ export default function TokenAvatar({
   const showImage = resolved && !failed;
 
   return (
-    <div className="relative shrink-0 rounded-full overflow-hidden" style={{ width: size, height: size }}>
+    <div className="relative shrink-0 rounded-lg overflow-hidden" style={{ width: size, height: size }}>
       {/* Always in the DOM underneath — visible until the real image has
           actually finished loading, so a slow or broken fetch never shows
           a native broken-image glyph or bare alt text. */}

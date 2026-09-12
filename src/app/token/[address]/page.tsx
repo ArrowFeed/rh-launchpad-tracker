@@ -39,7 +39,7 @@ export default async function TokenDetail({ params }: { params: Promise<{ addres
     const quoteAmount = Number(t.amountQuote) / 1e18;
     const p = tokenAmount > 0 ? quoteAmount / tokenAmount : 0;
     return {
-      time: t.blockTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      time: t.blockTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       price: toUsd(p, token.quoteAsset, ethUsdPrice) ?? p,
     };
   });
@@ -123,9 +123,9 @@ export default async function TokenDetail({ params }: { params: Promise<{ addres
                       </td>
                       <td className="px-4 py-2 font-mono text-xs text-zinc-300">{fmtUsd(usd)}</td>
                       <td className="px-4 py-2 font-mono text-xs text-zinc-300">
-                        {(Number(tr.amountToken) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        {(Number(tr.amountToken) / 1e18).toLocaleString("en-US", { maximumFractionDigits: 2 })}
                       </td>
-                      <td className="px-4 py-2 text-zinc-500 text-xs">{tr.blockTime.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-zinc-500 text-xs">{tr.blockTime.toLocaleString("en-US")}</td>
                     </tr>
                   );
                 })}

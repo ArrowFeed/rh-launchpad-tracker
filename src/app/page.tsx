@@ -48,6 +48,7 @@ async function loadCards(): Promise<CardData[]> {
         imageUrl: t.imageUrl,
         launchpad: t.launchpad,
         launchedAt: t.launchedAt,
+        creatorAddress: t.creatorAddress,
         graduationStatus: t.graduationStatus,
         mcapUsd: toUsd(marketCap(price), t.quoteAsset, ethUsdPrice),
         volume24hUsd: toUsd(volumeSince(t.trades, 24 * 60 * 60 * 1000), t.quoteAsset, ethUsdPrice),
