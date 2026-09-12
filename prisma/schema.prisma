@@ -47,6 +47,14 @@ model Token {
   imageUrl         String?
   description      String?
 
+  // Pons-specific for now: each token gets its own bonding curve contract,
+  // separate from the token contract itself, and a threshold (in quote
+  // asset units) it needs to hit before it graduates. Other launchpads may
+  // not use a separate curve contract at all (Pools.trade doesn't), so
+  // these stay optional rather than being required on every token.
+  curveAddress        String? @unique
+  graduationThreshold String?
+
   trades Trade[]
 
   createdAt DateTime @default(now())
