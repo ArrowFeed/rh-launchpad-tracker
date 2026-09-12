@@ -1,0 +1,80 @@
+// This file defines the shape of our database. Prisma reads this and
+// generates safe, typed functions we use elsewhere in the app to read and
+// write data — we never write raw SQL by hand.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Which launchpad a token was launched on. Adding a new launchpad later
+// (or eventually our own, in Phase 2) just means adding a new value here.
+enum Launchpad {
+  PONS
+  POOLS_TRADE
+  HOOD_FUN
+}
+
+// Whether a token is still trading on its bonding curve, or has already
+// "graduated" (swept into a locked DEX pool).
+enum GraduationStatus {
+  BONDING
+  GRADUATED
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+// One row per token launch, across any launchpad.
+model Token {
+  id               String           @id @default(cuid())
+  launchpad        Launchpad
+  contractAddress  String           @unique
+  name             String
+  symbol           String
+  creatorAddress   String
+  launchTxHash     String
+  launchedAt       DateTime
+  quoteAsset       String
+  graduationStatus GraduationStatus @default(BONDING)
+  graduatedAt      DateTime?
+  imageUrl         String?
+  description      String?
+
+  trades Trade[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([launchpad])
+  @@index([graduationStatus])
+  @@index([launchedAt])
+}
+
+// One row per buy or sell against a token, on its bonding curve or its
+// graduated DEX pool. Market cap, volume, and trade counts are all
+// calculated from these rows rather than stored separately, so there's
+// only ever one source of truth for a token's trading history.
+model Trade {
+  id             String    @id @default(cuid())
+  tokenId        String
+  token          Token     @relation(fields: [tokenId], references: [id])
+  txHash         String
+  traderAddress  String
+  side           TradeSide
+  amountToken    String // stored as a string to avoid floating-point rounding on very large/small token amounts
+  amountQuote    String
+  priceUsd       Float?
+  blockTime      DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([tokenId, blockTime])
+  @@index([blockTime])
+}
