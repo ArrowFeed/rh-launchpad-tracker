@@ -67,7 +67,7 @@ function Column({ title, subtitle, cards }: { title: string; subtitle: string; c
         <span className="text-zinc-600 text-xs">{subtitle}</span>
         <span className="ml-auto text-zinc-600 text-xs">{cards.length}</span>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-1.5 max-h-[calc(100vh-160px)] overflow-y-auto pr-1">
         {cards.length === 0 ? (
           <p className="text-zinc-600 text-xs px-1">Nothing here yet.</p>
         ) : (
