@@ -35,9 +35,18 @@ const erc20MetadataAbi = [
   { name: "logo", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
-async function blockTimestamp(blockNumber: bigint): Promise<Date> {
+// Shared per-tick so multiple logs landing in the same block (very common
+// when a chunk has several launches/trades) share one getBlock call
+// instead of one each — cuts real RPC load, which matters now that we
+// know Alchemy's free tier will 429 us.
+async function blockTimestamp(blockNumber: bigint, cache: Map<string, Date>): Promise<Date> {
+  const key = blockNumber.toString();
+  const cached = cache.get(key);
+  if (cached) return cached;
   const block = await publicClient.getBlock({ blockNumber });
-  return new Date(Number(block.timestamp) * 1000);
+  const date = new Date(Number(block.timestamp) * 1000);
+  cache.set(key, date);
+  return date;
 }
 
 async function readTokenMetadata(
@@ -60,23 +69,26 @@ async function readTokenMetadata(
   return { name, symbol, imageUrl: imageUrl || null };
 }
 
-async function upsertLaunchedToken(log: {
-  args: {
-    token?: `0x${string}`;
-    curve?: `0x${string}`;
-    deployer?: `0x${string}`;
-    pairToken?: `0x${string}`;
-    graduationThreshold?: bigint;
-  };
-  transactionHash: `0x${string}`;
-  blockNumber: bigint;
-}) {
+async function upsertLaunchedToken(
+  log: {
+    args: {
+      token?: `0x${string}`;
+      curve?: `0x${string}`;
+      deployer?: `0x${string}`;
+      pairToken?: `0x${string}`;
+      graduationThreshold?: bigint;
+    };
+    transactionHash: `0x${string}`;
+    blockNumber: bigint;
+  },
+  blockCache: Map<string, Date>
+) {
   const { token, curve, deployer, pairToken, graduationThreshold } = log.args;
   if (!token || !curve || !deployer || !pairToken || graduationThreshold === undefined) return;
 
   const [{ name, symbol, imageUrl }, launchedAt] = await Promise.all([
     readTokenMetadata(token),
-    blockTimestamp(log.blockNumber),
+    blockTimestamp(log.blockNumber, blockCache),
   ]);
 
   await prisma.token.upsert({
@@ -100,10 +112,13 @@ async function upsertLaunchedToken(log: {
   console.log(`[pons] launched ${symbol} (${name}) at ${token}`);
 }
 
-async function markGraduated(log: { args: { token?: `0x${string}` }; blockNumber: bigint }) {
+async function markGraduated(
+  log: { args: { token?: `0x${string}` }; blockNumber: bigint },
+  blockCache: Map<string, Date>
+) {
   const { token } = log.args;
   if (!token) return;
-  const graduatedAt = await blockTimestamp(log.blockNumber);
+  const graduatedAt = await blockTimestamp(log.blockNumber, blockCache);
   await prisma.token.updateMany({
     where: { contractAddress: token.toLowerCase() },
     data: { graduationStatus: "GRADUATED", graduatedAt },
@@ -111,20 +126,23 @@ async function markGraduated(log: { args: { token?: `0x${string}` }; blockNumber
   console.log(`[pons] graduated ${token}`);
 }
 
-async function recordTrade(log: {
-  args: {
-    buyer?: `0x${string}`;
-    seller?: `0x${string}`;
-    quoteIn?: bigint;
-    quoteOut?: bigint;
-    tokensOut?: bigint;
-    tokensIn?: bigint;
-  };
-  address: `0x${string}`;
-  transactionHash: `0x${string}`;
-  blockNumber: bigint;
-  side: "BUY" | "SELL";
-}) {
+async function recordTrade(
+  log: {
+    args: {
+      buyer?: `0x${string}`;
+      seller?: `0x${string}`;
+      quoteIn?: bigint;
+      quoteOut?: bigint;
+      tokensOut?: bigint;
+      tokensIn?: bigint;
+    };
+    address: `0x${string}`;
+    transactionHash: `0x${string}`;
+    blockNumber: bigint;
+    side: "BUY" | "SELL";
+  },
+  blockCache: Map<string, Date>
+) {
   // The curve address on the log tells us which token this trade belongs
   // to — we look it up rather than watching each curve individually, since
   // that would mean juggling a separate subscription per token.
@@ -136,7 +154,7 @@ async function recordTrade(log: {
   const amountToken = log.side === "BUY" ? log.args.tokensOut : log.args.tokensIn;
   if (!trader || amountQuote === undefined || amountToken === undefined) return;
 
-  const blockTime = await blockTimestamp(log.blockNumber);
+  const blockTime = await blockTimestamp(log.blockNumber, blockCache);
   await prisma.trade.create({
     data: {
       tokenId: token.id,
@@ -166,12 +184,16 @@ async function processRange(fromBlock: bigint, toBlock: bigint) {
     getLogsChunked({ event: curveSellEvent, fromBlock, toBlock }),
   ]);
 
+  // Shared across every log in this tick — several logs landing in the
+  // same block (common) now cost one getBlock call instead of one each.
+  const blockCache = new Map<string, Date>();
+
   // Launches first — trades and graduations for a token only make sense
   // once that token's row (and its curve address) already exists.
-  for (const log of launches) await upsertLaunchedToken(log as any);
-  for (const log of graduations) await markGraduated(log as any);
-  for (const log of buys) await recordTrade({ ...(log as any), side: "BUY" });
-  for (const log of sells) await recordTrade({ ...(log as any), side: "SELL" });
+  for (const log of launches) await upsertLaunchedToken(log as any, blockCache);
+  for (const log of graduations) await markGraduated(log as any, blockCache);
+  for (const log of buys) await recordTrade({ ...(log as any), side: "BUY" }, blockCache);
+  for (const log of sells) await recordTrade({ ...(log as any), side: "SELL" }, blockCache);
 
   if (launches.length || graduations.length || buys.length || sells.length) {
     console.log(
@@ -180,24 +202,52 @@ async function processRange(fromBlock: bigint, toBlock: bigint) {
   }
 }
 
+function isRateLimitError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 429 || String(err).includes("429");
+}
+
 // One continuous loop rather than a separate one-off backfill plus a
 // watcher: it starts a bit behind the chain tip and works forward in
 // 10-block chunks (the free-tier limit) until it's caught up, then just
 // keeps checking for new blocks — so "catching up on history" and
 // "watching for new activity" are the same code path, not two.
+//
+// Every step is inside the try/catch — this is a deliberate fix for a
+// real outage: Alchemy 429'd us once, the uncaught error propagated all
+// the way up to the process-level handler in run.ts, which called
+// process.exit(1), and Railway does not automatically restart a crashed
+// deployment. The indexer sat dead for over 10 hours before anyone
+// noticed. A single bad tick (rate limit, timeout, brief RPC outage) must
+// never take the whole process down again — it logs, backs off, and
+// keeps going instead.
 export async function runPonsIndexer() {
-  const latest = await publicClient.getBlockNumber();
-  let cursor = latest > BACKFILL_BLOCKS ? latest - BACKFILL_BLOCKS : BigInt(0);
-  console.log(`[pons] starting from block ${cursor}, chain tip is ${latest}`);
+  let cursor: bigint | null = null;
 
   while (true) {
-    const tip = await publicClient.getBlockNumber();
-    if (cursor > tip) {
-      await new Promise((r) => setTimeout(r, 2_000));
-      continue;
+    try {
+      let current: bigint;
+      if (cursor === null) {
+        const latest = await publicClient.getBlockNumber();
+        current = latest > BACKFILL_BLOCKS ? latest - BACKFILL_BLOCKS : BigInt(0);
+        console.log(`[pons] starting from block ${current}, chain tip is ${latest}`);
+      } else {
+        current = cursor;
+      }
+
+      const tip = await publicClient.getBlockNumber();
+      if (current > tip) {
+        cursor = current;
+        await new Promise((r) => setTimeout(r, 2_000));
+        continue;
+      }
+      const chunkEnd = current + BigInt(9) > tip ? tip : current + BigInt(9);
+      await processRange(current, chunkEnd);
+      cursor = chunkEnd + BigInt(1);
+    } catch (err) {
+      const backoffMs = isRateLimitError(err) ? 30_000 : 5_000;
+      console.error(`[pons] tick failed, backing off ${backoffMs}ms:`, err instanceof Error ? err.message : err);
+      await new Promise((r) => setTimeout(r, backoffMs));
     }
-    const chunkEnd = cursor + BigInt(9) > tip ? tip : cursor + BigInt(9);
-    await processRange(cursor, chunkEnd);
-    cursor = chunkEnd + BigInt(1);
   }
 }
