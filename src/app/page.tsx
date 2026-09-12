@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { latestPrice, marketCap, volumeSince, graduationProgressPct } from "@/lib/ponsMarket";
+import { latestPrice, marketCap, volumeSince, graduationProgressPct, toUsd } from "@/lib/ponsMarket";
+import { getEthUsdPrice } from "@/lib/ethPrice";
 import TokenCard, { type CardData } from "./TokenCard";
 
 // Without this, Next.js would run the database query once at build time
@@ -14,9 +15,10 @@ export const dynamic = "force-dynamic";
 const FINAL_STRETCH_THRESHOLD = 70;
 
 async function loadCards(): Promise<CardData[]> {
-  const tokens = await prisma.token.findMany({
-    include: { trades: { orderBy: { blockTime: "asc" } } },
-  });
+  const [tokens, ethUsdPrice] = await Promise.all([
+    prisma.token.findMany({ include: { trades: { orderBy: { blockTime: "asc" } } } }),
+    getEthUsdPrice(),
+  ]);
 
   return Promise.all(
     tokens.map(async (t) => {
@@ -43,12 +45,12 @@ async function loadCards(): Promise<CardData[]> {
         contractAddress: t.contractAddress,
         symbol: t.symbol,
         name: t.name,
+        imageUrl: t.imageUrl,
         launchpad: t.launchpad,
         launchedAt: t.launchedAt,
         graduationStatus: t.graduationStatus,
-        price,
-        mcap: marketCap(price),
-        volume24h: volumeSince(t.trades, 24 * 60 * 60 * 1000),
+        mcapUsd: toUsd(marketCap(price), t.quoteAsset, ethUsdPrice),
+        volume24hUsd: toUsd(volumeSince(t.trades, 24 * 60 * 60 * 1000), t.quoteAsset, ethUsdPrice),
         tradeCount: t.trades.length,
         progress,
         sparkPoints,

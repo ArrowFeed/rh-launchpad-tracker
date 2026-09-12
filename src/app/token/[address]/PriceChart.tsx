@@ -1,6 +1,7 @@
 "use client";
 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { fmtUsd } from "@/lib/format";
 
 export type PricePoint = { time: string; price: number };
 
@@ -24,12 +25,12 @@ export default function PriceChart({ data }: { data: PricePoint[] }) {
             tickLine={false}
             axisLine={{ stroke: "#27272a" }}
             width={70}
-            tickFormatter={(v) => Number(v).toExponential(1)}
+            tickFormatter={(v) => fmtUsd(Number(v))}
           />
           <Tooltip
             contentStyle={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: "#a1a1aa" }}
-            formatter={(value) => [typeof value === "number" ? value.toExponential(4) : String(value), "Price"]}
+            formatter={(value) => [typeof value === "number" ? fmtUsd(value) : String(value), "Price"]}
           />
           <Line type="monotone" dataKey="price" stroke="#fbbf24" strokeWidth={2} dot={false} />
         </LineChart>

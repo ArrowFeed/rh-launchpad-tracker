@@ -1,4 +1,5 @@
 import { publicClient } from "@/indexer/chain";
+import { NATIVE_ETH_ADDRESS } from "@/lib/ethPrice";
 
 // Pons V2 always mints a fixed 1,000,000,000-token supply per launch —
 // documented behavior, not something we need to read from chain per token.
@@ -41,6 +42,21 @@ export function volumeSince(trades: TradeLike[], sinceMs: number): number {
   return trades
     .filter((t) => t.blockTime.getTime() >= cutoff)
     .reduce((sum, t) => sum + Number(t.amountQuote) / 1e18, 0);
+}
+
+// Only native ETH (the zero address, how these contracts represent it) has
+// a live price source wired up right now — most launches use it, but a
+// handful use other quote assets (stablecoins, tokenized stocks) we don't
+// have a price feed for yet. Returning null for those is more honest than
+// guessing, and callers should show "—" rather than a made-up number.
+export function toUsd(
+  quoteAmount: number | null,
+  quoteAsset: string,
+  ethUsdPrice: number | null
+): number | null {
+  if (quoteAmount === null || ethUsdPrice === null) return null;
+  if (quoteAsset.toLowerCase() !== NATIVE_ETH_ADDRESS) return null;
+  return quoteAmount * ethUsdPrice;
 }
 
 // Live on-chain read rather than derived from trade history — this is the

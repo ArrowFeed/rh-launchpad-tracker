@@ -24,11 +24,15 @@ const curveSellEvent = parseAbiItem(
   "event CurveSell(address indexed seller, address indexed recipient, uint256 tokensIn, uint256 quoteOut, uint256 fee, uint256 tax)"
 );
 
-// Pons's launch event doesn't carry the token's name/symbol — those live on
-// the token's own ERC-20 contract, so we read them directly once per launch.
-const erc20NameSymbolAbi = [
+// Pons's launch event doesn't carry the token's name/symbol/logo — those
+// live on the token's own ERC-20 contract ("self-describing onchain", per
+// Pons's docs), so we read them directly once per launch. Confirmed
+// logo() returns a real CDN URL by testing against a live token before
+// relying on it.
+const erc20MetadataAbi = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { name: "logo", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
 async function blockTimestamp(blockNumber: bigint): Promise<Date> {
@@ -36,18 +40,24 @@ async function blockTimestamp(blockNumber: bigint): Promise<Date> {
   return new Date(Number(block.timestamp) * 1000);
 }
 
-async function readNameSymbol(tokenAddress: `0x${string}`): Promise<{ name: string; symbol: string }> {
-  try {
-    const [name, symbol] = await Promise.all([
-      publicClient.readContract({ address: tokenAddress, abi: erc20NameSymbolAbi, functionName: "name" }),
-      publicClient.readContract({ address: tokenAddress, abi: erc20NameSymbolAbi, functionName: "symbol" }),
-    ]);
-    return { name, symbol };
-  } catch {
-    // Some tokens can have non-standard or reverting name()/symbol() calls
-    // — better to show a placeholder than to drop the launch entirely.
-    return { name: "Unknown", symbol: "???" };
-  }
+async function readTokenMetadata(
+  tokenAddress: `0x${string}`
+): Promise<{ name: string; symbol: string; imageUrl: string | null }> {
+  const [name, symbol] = await Promise.all([
+    publicClient
+      .readContract({ address: tokenAddress, abi: erc20MetadataAbi, functionName: "name" })
+      .catch(() => "Unknown"),
+    publicClient
+      .readContract({ address: tokenAddress, abi: erc20MetadataAbi, functionName: "symbol" })
+      .catch(() => "???"),
+  ]);
+  // logo() isn't part of the standard ERC-20 interface, so it's kept as
+  // its own try/catch — a token missing it shouldn't lose its real name
+  // and symbol too.
+  const imageUrl = await publicClient
+    .readContract({ address: tokenAddress, abi: erc20MetadataAbi, functionName: "logo" })
+    .catch(() => null);
+  return { name, symbol, imageUrl: imageUrl || null };
 }
 
 async function upsertLaunchedToken(log: {
@@ -64,8 +74,8 @@ async function upsertLaunchedToken(log: {
   const { token, curve, deployer, pairToken, graduationThreshold } = log.args;
   if (!token || !curve || !deployer || !pairToken || graduationThreshold === undefined) return;
 
-  const [{ name, symbol }, launchedAt] = await Promise.all([
-    readNameSymbol(token),
+  const [{ name, symbol, imageUrl }, launchedAt] = await Promise.all([
+    readTokenMetadata(token),
     blockTimestamp(log.blockNumber),
   ]);
 
@@ -77,6 +87,7 @@ async function upsertLaunchedToken(log: {
       curveAddress: curve.toLowerCase(),
       name,
       symbol,
+      imageUrl,
       creatorAddress: deployer.toLowerCase(),
       launchTxHash: log.transactionHash,
       launchedAt,
